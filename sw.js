@@ -1,7 +1,7 @@
 // Parabola Service Worker
 // Caches all app files so it works fully offline after first load
 
-const CACHE_NAME = 'parabola-v1';
+const CACHE_NAME = 'parabola-v2';
 
 const ASSETS_TO_CACHE = [
   './',
