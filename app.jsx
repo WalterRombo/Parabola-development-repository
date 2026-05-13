@@ -4,6 +4,7 @@ const { useState, useEffect, useRef, useCallback } = React;
 
 const EXERCISE_TIME = 60;
 const REST_TIME = 15;
+const PREP_TIME = 10;
 const CIRCUIT_SIZE = 20;
 const CATEGORIES = ["Kettlebell", "Bodyweight", "Core", "Cardio", "Strength"];
 
@@ -315,18 +316,40 @@ function buildWorkout(exercises) {
   return result;
 }
 
-function beep(freq = 440, dur = 0.15, vol = 0.25) {
+// Core tone generator — uses Web Audio API oscillator, no sound files needed.
+// type: "square" (harsh/buzzy), "sine" (smooth), "triangle" (soft), "sawtooth" (bright)
+function beep(freq = 440, dur = 0.15, vol = 0.25, type = "square") {
   try {
     const ctx = new AudioContext();
     const osc = ctx.createOscillator();
     const g   = ctx.createGain();
     osc.connect(g); g.connect(ctx.destination);
-    osc.type = "square";
+    osc.type = type;
     osc.frequency.value = freq;
     g.gain.setValueAtTime(vol, ctx.currentTime);
     g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + dur);
     osc.start(); osc.stop(ctx.currentTime + dur);
     setTimeout(() => ctx.close(), (dur + 0.1) * 1000);
+  } catch {}
+}
+
+// Play two tones in sequence (used for interval-start "double-beep")
+function beepSeq(tones) {
+  try {
+    const ctx = new AudioContext();
+    let t = ctx.currentTime;
+    tones.forEach(([freq, dur, vol, type = "sine"]) => {
+      const osc = ctx.createOscillator();
+      const g   = ctx.createGain();
+      osc.connect(g); g.connect(ctx.destination);
+      osc.type = type;
+      osc.frequency.value = freq;
+      g.gain.setValueAtTime(vol, t);
+      g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+      osc.start(t); osc.stop(t + dur);
+      t += dur + 0.04;
+    });
+    setTimeout(() => ctx.close(), (t + 0.2) * 1000);
   } catch {}
 }
 
@@ -369,9 +392,9 @@ body{background:var(--bg);margin:0;}
 .hdr-r .n{font-family:'Bebas Neue',sans-serif;font-size:32px;color:var(--tx);line-height:1;}
 .hdr-r .s{font-family:'IBM Plex Mono',monospace;font-size:9px;color:var(--mu);letter-spacing:1px;}
 .tabs{position:fixed;bottom:0;width:100%;max-width:430px;background:var(--s1);border-top:1px solid var(--bd);display:flex;z-index:99;}
-.tab{flex:1;border:none;background:none;color:var(--mu);display:flex;flex-direction:column;align-items:center;gap:2px;padding:9px 4px;cursor:pointer;font-family:'IBM Plex Mono',monospace;font-size:9px;letter-spacing:1.5px;text-transform:uppercase;transition:color .15s;}
+.tab{flex:1;border:none;background:none;color:var(--mu);display:flex;flex-direction:column;align-items:center;gap:2px;padding:10px 5px;cursor:pointer;font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:1.5px;text-transform:uppercase;transition:color .15s;}
 .tab.on{color:var(--ac);}
-.tab-ic{font-size:16px;line-height:1;}
+.tab-ic{font-size:18px;line-height:1;}
 .pg{padding:14px 14px 0;}
 .card{background:var(--s1);border:1px solid var(--bd);border-radius:3px;padding:13px;margin-bottom:10px;}
 .ct{font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--mu);text-transform:uppercase;letter-spacing:2px;margin-bottom:10px;}
@@ -408,12 +431,12 @@ body{background:var(--bg);margin:0;}
 .tw{padding:4px 0;}
 .tph{font-family:'IBM Plex Mono',monospace;font-size:10px;text-transform:uppercase;letter-spacing:4px;color:var(--mu);text-align:center;margin-bottom:6px;}
 .tex{font-family:'Bebas Neue',sans-serif;font-size:40px;letter-spacing:2px;text-align:center;line-height:1.1;min-height:50px;}
-.tnx{font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--mu);text-align:center;margin-top:4px;}
+.tnx{font-family:'IBM Plex Mono',monospace;font-size:20px;color:var(--mu);text-align:center;margin-top:6px;letter-spacing:1px;}
 .tdig{font-family:'IBM Plex Mono',monospace;font-size:82px;font-weight:700;text-align:center;line-height:1;margin:10px 0 6px;transition:color .3s;}
-.pb{height:3px;background:var(--bd);border-radius:2px;overflow:hidden;margin:6px 0 14px;}
-.pf{height:100%;border-radius:2px;transition:width 1s linear,background .3s;}
-.dots{display:flex;flex-wrap:wrap;gap:5px;justify-content:center;margin-bottom:12px;}
-.dot{width:9px;height:9px;border-radius:50%;background:var(--bd);}
+.pb{height:19px;background:var(--bd);border-radius:4px;overflow:hidden;margin:10px 0 16px;}
+.pf{height:100%;border-radius:4px;transition:width 1s linear,background .3s;}
+.dots{display:flex;flex-wrap:wrap;gap:6px;justify-content:center;margin-bottom:14px;}
+.dot{width:13px;height:13px;border-radius:50%;background:var(--bd);}
 .dot.dn{background:var(--ac);}
 .dot.cu{background:var(--ac2);}
 .comp{text-align:center;padding:28px 10px;}
@@ -525,7 +548,16 @@ function App() {
   const [exercises,      saveExercises]      = useStorage("kb_ex_v4",      DEFAULT_EXERCISES);
   const [stats,          saveStats]          = useStorage("kb_stats_v3",    { history: [] });
   const [todayWorkout,   saveTodayWorkout]   = useStorage("kb_today_v3",   { date: null, sets: [] });
-  const [stravaToken,    saveStravaToken]    = useStorage("strava_token",   "");
+  const [stravaData,     saveStravaData]     = useStorage("strava_oauth_v1", {
+    clientId: "", clientSecret: "", accessToken: "", refreshToken: "", expiresAt: 0
+  });
+  // Detect ?code= callback from Strava and immediately clear it from URL
+  const [pendingCode] = useState(() => {
+    const p = new URLSearchParams(window.location.search).get("code") || "";
+    if (p) window.history.replaceState({}, "", window.location.pathname);
+    return p;
+  });
+  const [stravaConnecting, setStravaConnecting] = useState(false);
   const [pin,            savePin]            = useStorage("kb_pin",         "");
   const [soundOn,        setSoundOn]         = useState(true);
 
@@ -541,7 +573,32 @@ function App() {
   const setIdxRef   = useRef(0);
   const timeRef     = useRef(EXERCISE_TIME);
   const completedRef= useRef(false);
-  const intervalRef = useRef(null);
+  const intervalRef  = useRef(null);
+  const wakeLockRef  = useRef(null);
+
+  // ── Wake Lock: prevents phone screen from sleeping during workout ──
+  async function requestWakeLock() {
+    if ("wakeLock" in navigator) {
+      try {
+        wakeLockRef.current = await navigator.wakeLock.request("screen");
+      } catch (e) { /* silently ignore — device may not support it */ }
+    }
+  }
+  function releaseWakeLock() {
+    if (wakeLockRef.current) {
+      wakeLockRef.current.release().catch(() => {});
+      wakeLockRef.current = null;
+    }
+  }
+  // Re-acquire wake lock if user switches away and back while workout is running
+  useEffect(() => {
+    const handleVisibility = () => {
+      const active = ["exercise","rest","prep"].includes(phaseRef.current);
+      if (document.visibilityState === "visible" && active) requestWakeLock();
+    };
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => document.removeEventListener("visibilitychange", handleVisibility);
+  }, []);
 
   // Timer state (for render)
   const [phase,   setPhase]   = useState("idle");
@@ -555,9 +612,10 @@ function App() {
   const [searchQ, setSearchQ]   = useState("");
 
   // Strava UI
-  const [tokenInput, setTokenInput]= useState("");
-  const [stravaPosted, setStravaPosted]= useState(false);
-  const [stravaErr,    setStravaErr]   = useState("");
+  const [stravaSetupId,     setStravaSetupId]     = useState("");
+  const [stravaSetupSecret, setStravaSetupSecret] = useState("");
+  const [stravaPosted,      setStravaPosted]      = useState(false);
+  const [stravaErr,         setStravaErr]         = useState("");
 
   // Computed stats (history counts + manual base offsets)
   const yearHistory       = stats.history.filter(h => h.date.startsWith(yearStr));
@@ -573,6 +631,12 @@ function App() {
   const todayEntry        = stats.history.find(h => h.date === today);
   const todayDone         = todayEntry?.completed === true;
   const currentEx         = hasWorkout ? todayWorkout.sets[setIdx] : null;
+  // "Next" and "After that" lookups for workout display
+  // During exercise phase: currentEx=sets[N], nextEx=sets[N+1], afterEx=sets[N+2]
+  // During rest phase: setIdx was already incremented, so currentEx=sets[N+1] (upcoming),
+  //   nextEx=sets[N+2] (the one after that)
+  const nextEx  = hasWorkout && setIdx + 1 < CIRCUIT_SIZE ? todayWorkout.sets[setIdx + 1] : null;
+  const afterEx = hasWorkout && setIdx + 2 < CIRCUIT_SIZE ? todayWorkout.sets[setIdx + 2] : null;
 
   // PIN logic
   const needsPin = pin !== "" && !unlocked;
@@ -609,38 +673,63 @@ function App() {
     }
   }, [phase]);
 
-  function doBeep(f, d, v) { if (soundOn) beep(f, d, v); }
+  function doBeep(f, d, v, type) { if (soundOn) beep(f, d, v, type); }
+  function doSeq(tones)           { if (soundOn) beepSeq(tones); }
 
   function runInterval() {
     clearInterval(intervalRef.current);
     intervalRef.current = setInterval(() => {
       timeRef.current--;
-      const t = timeRef.current;
+      const t   = timeRef.current;
+      const ph  = phaseRef.current;
+      if (ph === "paused") return;
 
-      if (t <= 3 && t > 0 && phaseRef.current !== "paused") {
-        doBeep(660, 0.08, 0.18);
+      // ── Countdown beeps: last 3 seconds of ANY interval ──
+      // Short harsh square-wave blips at 660 Hz, getting slightly louder each second
+      if (t === 3) doBeep(660, 0.07, 0.16, "square");
+      if (t === 2) doBeep(660, 0.07, 0.20, "square");
+      if (t === 1) doBeep(660, 0.07, 0.24, "square");
+
+      // ── Halfway tone: only during exercise intervals ──
+      // Soft sine-wave reminder at the 30-second mark so you know you're halfway through
+      if (ph === "exercise" && t === Math.floor(EXERCISE_TIME / 2)) {
+        doBeep(528, 0.12, 0.14, "sine");
       }
 
       if (t <= 0) {
-        if (phaseRef.current === "exercise") {
+        if (ph === "prep") {
+          // ── Prep complete → first exercise begins ──
+          // Rising two-tone: signals "go!" clearly different from countdown blips
+          doSeq([[440, 0.1, 0.25, "sine"], [660, 0.18, 0.30, "sine"]]);
+          phaseRef.current = "exercise";
+          setPhase("exercise");
+          timeRef.current = EXERCISE_TIME;
+          setTimeLeft(EXERCISE_TIME);
+
+        } else if (ph === "exercise") {
           const next = setIdxRef.current + 1;
           if (next >= CIRCUIT_SIZE) {
+            // ── Circuit complete: ascending three-note fanfare ──
+            doSeq([[523, 0.12, 0.3, "sine"], [659, 0.12, 0.3, "sine"], [784, 0.35, 0.35, "sine"]]);
             clearInterval(intervalRef.current);
-            doBeep(880, 0.5, 0.35);
+            releaseWakeLock();
             phaseRef.current = "complete";
             setPhase("complete");
             setTimeLeft(0);
             return;
           }
-          doBeep(440, 0.25, 0.28);
+          // ── Exercise → rest: falling two-tone ("ease off") ──
+          doSeq([[660, 0.1, 0.25, "sine"], [440, 0.18, 0.28, "sine"]]);
           setIdxRef.current = next;
           setSetIdx(next);
           phaseRef.current = "rest";
           setPhase("rest");
           timeRef.current = REST_TIME;
           setTimeLeft(REST_TIME);
-        } else {
-          doBeep(660, 0.2, 0.25);
+
+        } else if (ph === "rest") {
+          // ── Rest → exercise: rising two-tone ("go again") ──
+          doSeq([[440, 0.1, 0.25, "sine"], [660, 0.18, 0.30, "sine"]]);
           phaseRef.current = "exercise";
           setPhase("exercise");
           timeRef.current = EXERCISE_TIME;
@@ -655,15 +744,18 @@ function App() {
   function startWorkout() {
     if (!hasWorkout) return;
     clearInterval(intervalRef.current);
-    phaseRef.current = "exercise";
+    // Start with PREP phase — 10-second "get ready" countdown before first set
+    phaseRef.current = "prep";
     setIdxRef.current = 0;
-    timeRef.current = EXERCISE_TIME;
+    timeRef.current = PREP_TIME;
     completedRef.current = false;
-    setPhase("exercise");
+    setPhase("prep");
     setSetIdx(0);
-    setTimeLeft(EXERCISE_TIME);
+    setTimeLeft(PREP_TIME);
     setTab("workout");
-    doBeep(660, 0.2, 0.3);
+    // Distinct prep-start tone: three soft rising sine blips
+    doSeq([[330, 0.08, 0.2, "sine"], [440, 0.08, 0.2, "sine"], [550, 0.12, 0.25, "sine"]]);
+    requestWakeLock();
     runInterval();
   }
 
@@ -671,10 +763,12 @@ function App() {
     if (phaseRef.current === "paused") {
       phaseRef.current = prevPhaseRef.current;
       setPhase(prevPhaseRef.current);
+      requestWakeLock();
       runInterval();
-    } else if (phaseRef.current === "exercise" || phaseRef.current === "rest") {
+    } else if (["exercise","rest","prep"].includes(phaseRef.current)) {
       prevPhaseRef.current = phaseRef.current;
       clearInterval(intervalRef.current);
+      releaseWakeLock();
       phaseRef.current = "paused";
       setPhase("paused");
     }
@@ -682,6 +776,7 @@ function App() {
 
   function stopWorkout() {
     clearInterval(intervalRef.current);
+    releaseWakeLock();
     phaseRef.current = "idle";
     setPhase("idle");
     setSetIdx(0);
@@ -724,7 +819,8 @@ function App() {
   );
 
   const progressPct = phase === "exercise" ? ((EXERCISE_TIME - timeLeft) / EXERCISE_TIME) * 100
-    : phase === "rest" ? ((REST_TIME - timeLeft) / REST_TIME) * 100 : 0;
+    : phase === "rest" ? ((REST_TIME - timeLeft) / REST_TIME) * 100
+    : phase === "prep" ? ((PREP_TIME - timeLeft) / PREP_TIME) * 100 : 0;
 
   function catCls(cat) {
     if (cat === "Kettlebell") return "badge kb";
@@ -733,27 +829,106 @@ function App() {
     return "badge ot";
   }
 
+  // Returns a valid access token, refreshing automatically if expired
+  async function getValidStravaToken() {
+    const sd = stravaData;
+    if (!sd.accessToken) throw new Error("Not connected");
+    const now = Math.floor(Date.now() / 1000);
+    // Token still valid (with 5-minute buffer)
+    if (sd.expiresAt - now > 300) return sd.accessToken;
+    // Token expired — refresh it
+    const res = await fetch("https://www.strava.com/oauth/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        client_id:     sd.clientId,
+        client_secret: sd.clientSecret,
+        refresh_token: sd.refreshToken,
+        grant_type:    "refresh_token",
+      }),
+    });
+    if (!res.ok) throw new Error("Token refresh failed — please reconnect Strava");
+    const data = await res.json();
+    const updated = { ...sd, accessToken: data.access_token, refreshToken: data.refresh_token, expiresAt: data.expires_at };
+    saveStravaData(updated);
+    return data.access_token;
+  }
+
+  // Exchange the one-time auth code for access + refresh tokens
+  async function exchangeStravaCode(code, sd) {
+    setStravaConnecting(true);
+    setStravaErr("");
+    try {
+      const res = await fetch("https://www.strava.com/oauth/token", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          client_id:     sd.clientId,
+          client_secret: sd.clientSecret,
+          code,
+          grant_type: "authorization_code",
+        }),
+      });
+      if (!res.ok) throw new Error("Auth failed — check your Client ID and Secret");
+      const data = await res.json();
+      saveStravaData({
+        clientId:     sd.clientId,
+        clientSecret: sd.clientSecret,
+        accessToken:  data.access_token,
+        refreshToken: data.refresh_token,
+        expiresAt:    data.expires_at,
+      });
+    } catch (e) {
+      setStravaErr(e.message);
+    } finally {
+      setStravaConnecting(false);
+    }
+  }
+
+  // Handle redirect-back from Strava (pendingCode detected on load)
+  useEffect(() => {
+    if (pendingCode && stravaData.clientId) {
+      exchangeStravaCode(pendingCode, stravaData);
+    }
+  }, [pendingCode, stravaData.clientId]);
+
+  // Redirect user to Strava to authorise
+  function connectStrava() {
+    const id = stravaSetupId.trim();
+    const secret = stravaSetupSecret.trim();
+    if (!id || !secret) { setStravaErr("Please enter both Client ID and Client Secret"); return; }
+    // Save credentials first so they survive the redirect
+    saveStravaData({ clientId: id, clientSecret: secret, accessToken: "", refreshToken: "", expiresAt: 0 });
+    const redirectUri = window.location.origin + window.location.pathname;
+    const url = `https://www.strava.com/oauth/authorize?client_id=${id}&response_type=code&redirect_uri=${encodeURIComponent(redirectUri)}&approval_prompt=force&scope=activity:write,read`;
+    window.location.href = url;
+  }
+
   async function postToStrava() {
-    if (!stravaToken) return;
+    if (!stravaData.accessToken) return;
     setStravaErr("");
     setStravaPosted(false);
     try {
+      const token = await getValidStravaToken();
       const elapsed = CIRCUIT_SIZE * (EXERCISE_TIME + REST_TIME);
       const res = await fetch("https://www.strava.com/api/v3/activities", {
         method: "POST",
-        headers: { "Authorization": `Bearer ${stravaToken}`, "Content-Type": "application/json" },
+        headers: { "Authorization": `Bearer ${token}`, "Content-Type": "application/json" },
         body: JSON.stringify({
-          name: "Kettlebell & Bodyweight Circuit",
+          name: `Activity #${totalCompleted}`,
           type: "WeightTraining",
           sport_type: "WeightTraining",
           start_date_local: new Date().toISOString(),
           elapsed_time: elapsed,
-          description: `${CIRCUIT_SIZE}-set circuit · ${EXERCISE_TIME}s work / ${REST_TIME}s rest · Circuit #${totalCompleted}`,
+          description: `KB/BW Circuit · ${CIRCUIT_SIZE} sets · ${EXERCISE_TIME}s work/${REST_TIME}s rest\nDays missed in ${yearStr}: ${yearMissed} · Activities in ${yearStr}: ${yearCompleted}`,
         }),
       });
       if (res.ok) { setStravaPosted(true); }
-      else { setStravaErr("Strava error — check token"); }
-    } catch { setStravaErr("Network error"); }
+      else {
+        const errData = await res.json().catch(() => ({}));
+        setStravaErr(errData.message || "Strava error — try reconnecting");
+      }
+    } catch (e) { setStravaErr(e.message || "Network error"); }
   }
 
   // ── Render ──────────────────────────────────────────────────────────────
@@ -891,6 +1066,7 @@ function App() {
               {soundOn ? "♪ ON" : "♪ OFF"}
             </button>
 
+            {/* IDLE */}
             {phase === "idle" && (
               <div className="idle-ctr">
                 <div className="idle-t">Ready to Begin?</div>
@@ -905,24 +1081,52 @@ function App() {
               </div>
             )}
 
+            {/* PREP — 10-second get-ready countdown */}
+            {phase === "prep" && (
+              <div className="tw">
+                <div className="tph" style={{letterSpacing:6,color:"var(--ac2)"}}>· GET READY ·</div>
+                {todayWorkout.sets[0] && (
+                  <div className="tex" style={{color:"var(--mu)",fontSize:28}}>
+                    {todayWorkout.sets[0].name}
+                  </div>
+                )}
+                <div
+                  className={`tdig ${timeLeft <= 3 ? "pulse" : ""}`}
+                  style={{color:"var(--ac2)"}}
+                >
+                  {timeLeft}
+                </div>
+                <div className="pb">
+                  <div className="pf" style={{width:`${progressPct}%`,background:"var(--ac2)"}} />
+                </div>
+                <button className="btn bg full" onClick={stopWorkout}>✕ Cancel</button>
+              </div>
+            )}
+
+            {/* COMPLETE */}
             {phase === "complete" && (
               <div className="comp">
                 <div style={{fontFamily:"IBM Plex Mono",fontSize:10,color:"var(--mu)",letterSpacing:3,textTransform:"uppercase",marginBottom:12}}>Circuit Complete</div>
                 <div className="comp-big">WELL<br/>DONE</div>
                 <div className="comp-sub">{CIRCUIT_SIZE} sets · {Math.round(CIRCUIT_SIZE*(EXERCISE_TIME+REST_TIME)/60)} min</div>
                 <div style={{fontFamily:"Bebas Neue",fontSize:22,color:"var(--gn)",letterSpacing:2,marginTop:16}}>
-                  Circuit #{totalCompleted} logged ✓
+                  Activity #{totalCompleted} logged ✓
                 </div>
-                {stravaToken && (
-                  <div style={{marginTop:20}}>
-                    {stravaPosted ? (
+                {/* Strava post — always shown when connected, regardless of how workout was logged */}
+                <div style={{marginTop:20}}>
+                  {stravaData.accessToken ? (
+                    stravaPosted ? (
                       <div style={{color:"var(--sv)",fontFamily:"IBM Plex Mono",fontSize:11,letterSpacing:1}}>✓ Posted to Strava</div>
                     ) : (
                       <button className="btn bsv bsm" onClick={postToStrava}>⚡ Post to Strava</button>
-                    )}
-                    {stravaErr && <div style={{color:"var(--rd)",fontSize:11,marginTop:6,fontFamily:"IBM Plex Mono"}}>{stravaErr}</div>}
-                  </div>
-                )}
+                    )
+                  ) : (
+                    <div style={{fontFamily:"IBM Plex Mono",fontSize:9,color:"var(--mu)",letterSpacing:1}}>
+                      Connect Strava in Stats tab to auto-log
+                    </div>
+                  )}
+                  {stravaErr && <div style={{color:"var(--rd)",fontSize:11,marginTop:6,fontFamily:"IBM Plex Mono"}}>{stravaErr}</div>}
+                </div>
                 <div style={{marginTop:28}}>
                   <button className="btn bp full" onClick={() => { phaseRef.current="idle"; setPhase("idle"); setTab("today"); setStravaPosted(false); }}>
                     Done
@@ -931,42 +1135,76 @@ function App() {
               </div>
             )}
 
+            {/* ACTIVE: exercise / rest / paused */}
             {(phase === "exercise" || phase === "rest" || phase === "paused") && currentEx && (
               <div className="tw">
+
+                {/* Progress dots — one per set, larger than before */}
                 <div className="dots">
                   {Array.from({length: CIRCUIT_SIZE}).map((_,i) => (
                     <div key={i} className={`dot ${i < setIdx ? "dn" : i === setIdx ? "cu" : ""}`} />
                   ))}
                 </div>
-                <div style={{fontFamily:"IBM Plex Mono",fontSize:10,color:"var(--mu)",textAlign:"center",letterSpacing:2,marginBottom:4}}>
+
+                {/* Set counter — half the size of the exercise name text (20px vs 40px) */}
+                <div style={{fontFamily:"IBM Plex Mono",fontSize:20,color:"var(--mu)",textAlign:"center",letterSpacing:2,marginBottom:4}}>
                   SET {setIdx+1} / {CIRCUIT_SIZE}
                 </div>
+
+                {/* Phase label */}
                 <div className="tph">
                   {phase === "paused" ? "· PAUSED ·" : phase === "exercise" ? "▶ EXERCISE" : "◎ REST"}
                 </div>
+
+                {/* Main exercise name — large */}
                 <div className="tex" style={{color: phase === "rest" ? "var(--ac2)" : "var(--tx)"}}>
                   {phase === "rest" ? "REST" : currentEx.name}
                 </div>
-                {phase === "rest" && (
-                  <div className="tnx">NEXT → {currentEx.name}</div>
-                )}
+
+                {/* Exercise description (if set, only during exercise) */}
                 {phase === "exercise" && currentEx.description ? (
-                  <div style={{fontFamily:"DM Sans",fontSize:12,color:"var(--mu)",textAlign:"center",marginTop:4,marginBottom:4,lineHeight:1.5,padding:"0 8px"}}>
+                  <div style={{fontFamily:"DM Sans",fontSize:12,color:"var(--mu)",textAlign:"center",marginTop:4,lineHeight:1.5,padding:"0 8px"}}>
                     {currentEx.description}
                   </div>
                 ) : null}
+
+                {/* NEXT exercise — 20px (half of 40px .tex), shown in both exercise and rest */}
+                {phase === "rest" ? (
+                  // During rest: currentEx IS the next exercise (setIdx already advanced)
+                  <>
+                    <div className="tnx" style={{color:"var(--ac)"}}>NEXT → {currentEx.name}</div>
+                    {nextEx && (
+                      <div className="tnx" style={{fontSize:16,color:"var(--mu)"}}>THEN → {nextEx.name}</div>
+                    )}
+                  </>
+                ) : (
+                  // During exercise: show upcoming exercises
+                  <>
+                    {nextEx && (
+                      <div className="tnx" style={{color:"var(--mu)"}}>NEXT → {nextEx.name}</div>
+                    )}
+                    {afterEx && (
+                      <div className="tnx" style={{fontSize:16,color:"var(--mu)",opacity:0.6}}>THEN → {afterEx.name}</div>
+                    )}
+                  </>
+                )}
+
+                {/* Timer digits */}
                 <div
                   className={`tdig ${timeLeft <= 5 && phase !== "paused" ? "pulse" : ""}`}
                   style={{color: phase === "rest" ? "var(--ac2)" : phase === "paused" ? "var(--mu)" : "var(--tx)"}}
                 >
                   {fmt(timeLeft)}
                 </div>
+
+                {/* Progress bar — 19px tall (~5mm), more visible across a room */}
                 <div className="pb">
                   <div className="pf" style={{
                     width: `${progressPct}%`,
                     background: phase === "rest" ? "var(--ac2)" : "var(--ac)"
                   }} />
                 </div>
+
                 <div className="row">
                   <button className="btn bp" style={{flex:2}} onClick={togglePause}>
                     {phase === "paused" ? "▶ Resume" : "⏸ Pause"}
@@ -1055,31 +1293,75 @@ function App() {
             {/* Strava */}
             <div className="card strava-card">
               <div className="ct strava-title">⚡ Strava</div>
-              {stravaToken ? (
+
+              {stravaConnecting && (
+                <div style={{fontFamily:"IBM Plex Mono",fontSize:11,color:"var(--ac2)",marginBottom:10,letterSpacing:1}}>
+                  ◎ Completing connection…
+                </div>
+              )}
+
+              {!stravaConnecting && stravaData.accessToken ? (
+                /* ── Connected state ── */
                 <>
-                  <div className="strava-connected">✓ Connected · access token stored</div>
-                  <div className="row">
-                    <button className="btn bsv bsm" style={{flex:1}} onClick={postToStrava}>Post Today's Circuit</button>
-                    <button className="btn bg bsm" onClick={() => saveStravaToken("")}>Disconnect</button>
+                  <div className="strava-connected">✓ Connected · auto-refresh enabled</div>
+                  <div style={{fontFamily:"IBM Plex Mono",fontSize:9,color:"var(--mu)",marginBottom:10,letterSpacing:1}}>
+                    Token refreshes automatically · never expires
                   </div>
-                  {stravaPosted && <div style={{color:"var(--gn)",fontFamily:"IBM Plex Mono",fontSize:10,marginTop:6}}>✓ Activity posted</div>}
+                  <div className="row">
+                    <button className="btn bsv bsm" style={{flex:1}} onClick={postToStrava}>
+                      Post Today's Circuit
+                    </button>
+                    <button className="btn bg bsm" onClick={() => {
+                      saveStravaData({ clientId:"", clientSecret:"", accessToken:"", refreshToken:"", expiresAt:0 });
+                      setStravaPosted(false); setStravaErr("");
+                    }}>Disconnect</button>
+                  </div>
+                  {stravaPosted && <div style={{color:"var(--gn)",fontFamily:"IBM Plex Mono",fontSize:10,marginTop:6,letterSpacing:1}}>✓ Activity posted to Strava</div>}
                   {stravaErr   && <div style={{color:"var(--rd)",fontFamily:"IBM Plex Mono",fontSize:10,marginTop:6}}>{stravaErr}</div>}
                 </>
-              ) : (
+              ) : !stravaConnecting && !stravaData.clientId ? (
+                /* ── Setup state: enter credentials ── */
                 <>
-                  <div className="muted" style={{fontSize:12,lineHeight:1.7,marginBottom:10}}>
-                    Paste your Strava access token to auto-log circuits as WeightTraining activities.
+                  <div className="muted" style={{fontSize:12,lineHeight:1.7,marginBottom:12}}>
+                    Enter your Strava API credentials to connect. You only do this once — tokens refresh automatically forever after.
                   </div>
-                  <input className="inp" type="password" placeholder="Strava access token..."
-                    value={tokenInput} onChange={e => setTokenInput(e.target.value)} />
-                  <button className="btn bsv full bsm" onClick={() => { if(tokenInput.trim()) { saveStravaToken(tokenInput.trim()); setTokenInput(""); } }}>
-                    Save Token
+                  <div style={{fontFamily:"IBM Plex Mono",fontSize:9,color:"var(--mu)",letterSpacing:1,marginBottom:6,textTransform:"uppercase"}}>
+                    Client ID
+                  </div>
+                  <input className="inp" type="text" inputMode="numeric" placeholder="e.g. 12345"
+                    value={stravaSetupId} onChange={e => setStravaSetupId(e.target.value)} />
+                  <div style={{fontFamily:"IBM Plex Mono",fontSize:9,color:"var(--mu)",letterSpacing:1,marginBottom:6,textTransform:"uppercase"}}>
+                    Client Secret
+                  </div>
+                  <input className="inp" type="password" placeholder="long alphanumeric string"
+                    value={stravaSetupSecret} onChange={e => setStravaSetupSecret(e.target.value)} />
+                  <button className="btn bsv full bsm" style={{marginTop:4}} onClick={connectStrava}>
+                    Connect with Strava →
                   </button>
+                  {stravaErr && <div style={{color:"var(--rd)",fontFamily:"IBM Plex Mono",fontSize:10,marginTop:6}}>{stravaErr}</div>}
                   <div className="strava-note">
-                    Get your token: developers.strava.com → My API Application → generate a personal token with activity:write scope.
+                    Find your Client ID and Secret at strava.com/settings/api after creating an API application. You will be redirected to Strava to authorise, then returned here automatically.
                   </div>
                 </>
-              )}
+              ) : !stravaConnecting && stravaData.clientId && !stravaData.accessToken ? (
+                /* ── Has credentials but not yet authorised (e.g. disconnect then reconnect) ── */
+                <>
+                  <div className="muted" style={{fontSize:12,lineHeight:1.7,marginBottom:10}}>
+                    Credentials saved. Tap below to authorise with Strava.
+                  </div>
+                  <button className="btn bsv full bsm" onClick={() => {
+                    setStravaSetupId(stravaData.clientId);
+                    setStravaSetupSecret(stravaData.clientSecret);
+                    connectStrava();
+                  }}>
+                    Authorise with Strava →
+                  </button>
+                  <button className="btn bg bsm" style={{marginTop:6,width:"100%"}} onClick={() =>
+                    saveStravaData({ clientId:"", clientSecret:"", accessToken:"", refreshToken:"", expiresAt:0 })
+                  }>Clear & start over</button>
+                  {stravaErr && <div style={{color:"var(--rd)",fontFamily:"IBM Plex Mono",fontSize:10,marginTop:6}}>{stravaErr}</div>}
+                </>
+              ) : null}
             </div>
 
             {/* Privacy / PIN */}
