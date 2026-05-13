@@ -316,11 +316,31 @@ function buildWorkout(exercises) {
   return result;
 }
 
-// Core tone generator — uses Web Audio API oscillator, no sound files needed.
+// ── Audio engine ─────────────────────────────────────────────────────────
+// iOS Safari will only create an AudioContext inside a direct user-gesture
+// (tap/touch) handler. Sounds fired from setInterval are NOT user gestures,
+// so creating a new AudioContext there fails silently every time.
+//
+// Fix: create ONE AudioContext on the first tap (startWorkout button),
+// store it in a module-level ref, and reuse it for every subsequent tone.
+// ctx.resume() handles the case where iOS suspends it after a page hide.
+
+let _audioCtx = null;
+
+function getAudioCtx() {
+  if (!_audioCtx || _audioCtx.state === "closed") {
+    _audioCtx = new AudioContext();
+  }
+  // iOS suspends the context when the page is hidden — resume it
+  if (_audioCtx.state === "suspended") _audioCtx.resume();
+  return _audioCtx;
+}
+
+// Play a single tone. Must be called with the shared ctx, NOT a new one.
 // type: "square" (harsh/buzzy), "sine" (smooth), "triangle" (soft), "sawtooth" (bright)
 function beep(freq = 440, dur = 0.15, vol = 0.25, type = "square") {
   try {
-    const ctx = new AudioContext();
+    const ctx = getAudioCtx();
     const osc = ctx.createOscillator();
     const g   = ctx.createGain();
     osc.connect(g); g.connect(ctx.destination);
@@ -328,15 +348,15 @@ function beep(freq = 440, dur = 0.15, vol = 0.25, type = "square") {
     osc.frequency.value = freq;
     g.gain.setValueAtTime(vol, ctx.currentTime);
     g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + dur);
-    osc.start(); osc.stop(ctx.currentTime + dur);
-    setTimeout(() => ctx.close(), (dur + 0.1) * 1000);
+    osc.start(ctx.currentTime);
+    osc.stop(ctx.currentTime + dur);
   } catch {}
 }
 
-// Play two tones in sequence (used for interval-start "double-beep")
+// Play multiple tones in sequence using the SAME shared context
 function beepSeq(tones) {
   try {
-    const ctx = new AudioContext();
+    const ctx = getAudioCtx();
     let t = ctx.currentTime;
     tones.forEach(([freq, dur, vol, type = "sine"]) => {
       const osc = ctx.createOscillator();
@@ -349,7 +369,6 @@ function beepSeq(tones) {
       osc.start(t); osc.stop(t + dur);
       t += dur + 0.04;
     });
-    setTimeout(() => ctx.close(), (t + 0.2) * 1000);
   } catch {}
 }
 
@@ -392,9 +411,9 @@ body{background:var(--bg);margin:0;}
 .hdr-r .n{font-family:'Bebas Neue',sans-serif;font-size:32px;color:var(--tx);line-height:1;}
 .hdr-r .s{font-family:'IBM Plex Mono',monospace;font-size:9px;color:var(--mu);letter-spacing:1px;}
 .tabs{position:fixed;bottom:0;width:100%;max-width:430px;background:var(--s1);border-top:1px solid var(--bd);display:flex;z-index:99;}
-.tab{flex:1;border:none;background:none;color:var(--mu);display:flex;flex-direction:column;align-items:center;gap:2px;padding:10px 5px;cursor:pointer;font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:1.5px;text-transform:uppercase;transition:color .15s;}
+.tab{flex:1;border:none;background:none;color:var(--mu);display:flex;flex-direction:column;align-items:center;gap:3px;padding:12px 6px;cursor:pointer;font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:1.5px;text-transform:uppercase;transition:color .15s;}
 .tab.on{color:var(--ac);}
-.tab-ic{font-size:18px;line-height:1;}
+.tab-ic{font-size:21px;line-height:1;}
 .pg{padding:14px 14px 0;}
 .card{background:var(--s1);border:1px solid var(--bd);border-radius:3px;padding:13px;margin-bottom:10px;}
 .ct{font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--mu);text-transform:uppercase;letter-spacing:2px;margin-bottom:10px;}
@@ -435,8 +454,8 @@ body{background:var(--bg);margin:0;}
 .tdig{font-family:'IBM Plex Mono',monospace;font-size:82px;font-weight:700;text-align:center;line-height:1;margin:10px 0 6px;transition:color .3s;}
 .pb{height:19px;background:var(--bd);border-radius:4px;overflow:hidden;margin:10px 0 16px;}
 .pf{height:100%;border-radius:4px;transition:width 1s linear,background .3s;}
-.dots{display:flex;flex-wrap:wrap;gap:6px;justify-content:center;margin-bottom:14px;}
-.dot{width:13px;height:13px;border-radius:50%;background:var(--bd);}
+.dots{display:flex;flex-wrap:wrap;gap:4px;justify-content:center;margin-bottom:12px;}
+.dot{width:10px;height:10px;border-radius:50%;background:var(--bd);}
 .dot.dn{background:var(--ac);}
 .dot.cu{background:var(--ac2);}
 .comp{text-align:center;padding:28px 10px;}
@@ -753,6 +772,10 @@ function App() {
     setSetIdx(0);
     setTimeLeft(PREP_TIME);
     setTab("workout");
+    // getAudioCtx() MUST be called here — inside the button-tap handler —
+    // to unlock the AudioContext on iOS. All subsequent timer-based beeps
+    // will reuse this same context and play correctly.
+    getAudioCtx();
     // Distinct prep-start tone: three soft rising sine blips
     doSeq([[330, 0.08, 0.2, "sine"], [440, 0.08, 0.2, "sine"], [550, 0.12, 0.25, "sine"]]);
     requestWakeLock();
