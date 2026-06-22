@@ -8,6 +8,17 @@ const PREP_TIME = 10;
 const CIRCUIT_SIZE = 20;
 const CATEGORIES = ["Kettlebell", "Bodyweight", "Core", "Cardio", "Strength"];
 
+// Returns the tags array for any exercise, whether it's already on the new
+// multi-tag format ({tags:[...]}) or the old single-category format
+// ({category:"X"}) saved before this feature existed. Using this everywhere
+// instead of e.tags directly means old saved libraries keep working with
+// zero data loss while the migration effect (below, in App) catches up.
+function tagsOf(e) {
+  if (Array.isArray(e.tags)) return e.tags;
+  if (e.category) return [e.category];
+  return [];
+}
+
 const DEFAULT_EXERCISES = [
   { id: "u1", name: "Sit-ups", category: "Core", description: "" },
   { id: "u2", name: "Press-ups", category: "Bodyweight", description: "" },
@@ -441,6 +452,7 @@ body{background:var(--bg);margin:0;}
 .bw{background:rgba(240,192,64,.12);color:var(--ac2);}
 .co{background:rgba(77,168,112,.12);color:var(--gn);}
 .ot{background:var(--s2);color:var(--mu);}
+.tg{background:rgba(80,180,200,.14);color:#5fc7dd;}
 .inp{width:100%;background:var(--s2);border:1px solid var(--bd);border-radius:2px;color:var(--tx);padding:10px 12px;font-family:'DM Sans',sans-serif;font-size:14px;outline:none;margin-bottom:8px;}
 .inp:focus{border-color:var(--ac);}
 .sel{background:var(--s2);border:1px solid var(--bd);border-radius:2px;color:var(--tx);padding:10px 12px;font-family:'DM Sans',sans-serif;font-size:14px;outline:none;flex:1;}
@@ -473,6 +485,15 @@ body{background:var(--bg);margin:0;}
 .cd.hd{background:none;}
 .cal-leg{display:flex;gap:12px;justify-content:center;margin-top:8px;font-family:'IBM Plex Mono',monospace;font-size:9px;color:var(--mu);}
 .done-banner{background:rgba(77,168,112,.08);border:1px solid rgba(77,168,112,.3);border-radius:2px;padding:10px 14px;text-align:center;margin-bottom:10px;color:var(--gn);font-family:'Bebas Neue',sans-serif;font-size:22px;letter-spacing:2px;}
+.cftabs{display:flex;flex-wrap:wrap;gap:5px;margin-bottom:12px;}
+.cftab{flex:1;min-width:0;border:1px solid var(--bd);background:none;color:var(--mu);font-family:'IBM Plex Mono',monospace;font-size:9px;letter-spacing:1px;text-transform:uppercase;cursor:pointer;border-radius:2px;padding:6px 4px;text-align:center;transition:all .15s;white-space:nowrap;}
+.cftab.on{background:var(--ac);color:white;border-color:var(--ac);}
+.cftab.bw-on{background:var(--ac2);color:#111;border-color:var(--ac2);}
+.filter-badge{display:inline-flex;align-items:center;gap:5px;font-family:'IBM Plex Mono',monospace;font-size:9px;text-transform:uppercase;letter-spacing:1.5px;padding:3px 8px;border-radius:2px;margin-bottom:10px;background:var(--s2);border:1px solid var(--bd);color:var(--mu);}
+.filter-badge.active{border-color:var(--ac);color:var(--ac);}
+.filter-badge.bw-active{border-color:var(--ac2);color:var(--ac2);}
+.bw-quick{background:rgba(240,192,64,.08);border:1px solid rgba(240,192,64,.3);color:var(--ac2);}
+.bw-quick:hover{background:rgba(240,192,64,.18);}
 .idle-ctr{text-align:center;padding:48px 20px;}
 .idle-t{font-family:'Bebas Neue',sans-serif;font-size:28px;letter-spacing:3px;color:var(--mu);margin-bottom:24px;}
 .muted{color:var(--mu);font-size:13px;}
@@ -502,11 +523,12 @@ input[type=number]::-webkit-inner-spin-button,input[type=number]::-webkit-outer-
 input[type=number]{-moz-appearance:textfield;}
 `;
 
-function ExerciseRow({ ex, catCls, onRemove, onDescChange }) {
+function ExerciseRow({ ex, catCls, allTags, onRemove, onDescChange, onToggleTag }) {
   const [open,    setOpen]    = useState(false);
   const [editing, setEditing] = useState(false);
   const [draft,   setDraft]   = useState(ex.description || "");
   const hasDesc = ex.description && ex.description.trim().length > 0;
+  const myTags = tagsOf(ex);
 
   function save() {
     onDescChange(draft);
@@ -517,7 +539,12 @@ function ExerciseRow({ ex, catCls, onRemove, onDescChange }) {
     <div style={{borderBottom:"1px solid var(--bd)"}}>
       <div className="xrow" style={{borderBottom:"none",cursor:"pointer"}} onClick={() => { if(!editing) setOpen(o=>!o); }}>
         <span className="xnm" style={{userSelect:"none"}}>{ex.name}</span>
-        <span className={catCls(ex.category)} style={{flexShrink:0}}>{ex.category}</span>
+        <span style={{display:"flex",gap:4,flexWrap:"wrap",justifyContent:"flex-end",flexShrink:0}}>
+          {myTags.length === 0 && <span className="badge ot">untagged</span>}
+          {myTags.map(tag => (
+            <span key={tag} className={catCls(tag)}>{tag}</span>
+          ))}
+        </span>
         {hasDesc && <span style={{fontFamily:"IBM Plex Mono",fontSize:9,color:"var(--ac)",marginLeft:4,flexShrink:0}}>✎</span>}
         <span style={{fontFamily:"IBM Plex Mono",fontSize:10,color:"var(--mu)",flexShrink:0,marginLeft:4}}>
           {open ? "▲" : "▼"}
@@ -526,6 +553,24 @@ function ExerciseRow({ ex, catCls, onRemove, onDescChange }) {
       </div>
       {open && (
         <div style={{padding:"8px 0 10px",paddingLeft:22}}>
+
+          {/* ── Tag editor — tap any tag to toggle it on/off for this exercise ── */}
+          <div style={{fontFamily:"IBM Plex Mono",fontSize:9,color:"var(--mu)",textTransform:"uppercase",letterSpacing:1.5,marginBottom:6}}>
+            Tags
+          </div>
+          <div className="ftabs" style={{marginBottom:12}}>
+            {allTags.map(tag => {
+              const isOn = myTags.includes(tag);
+              return (
+                <button
+                  key={tag}
+                  className={`ftab ${isOn ? "on" : ""}`}
+                  onClick={e => { e.stopPropagation(); onToggleTag(tag); }}
+                >{tag}</button>
+              );
+            })}
+          </div>
+
           {editing ? (
             <>
               <textarea
@@ -565,8 +610,56 @@ function App() {
   const yearStr = getYear();
 
   const [exercises,      saveExercises]      = useStorage("kb_ex_v4",      DEFAULT_EXERCISES);
+  const [customTags,     saveCustomTags]     = useStorage("kb_custom_tags_v1", []);
+
+  // One-time migration: any exercise still on the old single-category shape
+  // gets a "tags" array added (derived from its category), without touching
+  // exercises that already have tags. This runs against whatever is already
+  // in storage — your existing 291-exercise library — so nothing is lost or
+  // reset. Once every exercise has a tags array, the condition below is
+  // false and this effect does nothing on subsequent renders.
+  useEffect(() => {
+    const needsMigration = exercises.some(e => !Array.isArray(e.tags));
+    if (needsMigration) {
+      saveExercises(prev => prev.map(e =>
+        Array.isArray(e.tags) ? e : { ...e, tags: e.category ? [e.category] : [] }
+      ));
+    }
+  }, [exercises]);
+
+  // Full set of tags available to filter/assign by: built-in categories +
+  // user-created custom tags, deduplicated.
+  const allTags = [...new Set([...CATEGORIES, ...customTags])];
+
+  function addCustomTag(name) {
+    const clean = name.trim();
+    if (!clean) return;
+    const exists = allTags.some(t => t.toLowerCase() === clean.toLowerCase());
+    if (exists) return;
+    saveCustomTags(prev => [...prev, clean]);
+  }
+
+  function removeCustomTag(tag) {
+    saveCustomTags(prev => prev.filter(t => t !== tag));
+    // Strip the deleted tag from every exercise so nothing references a
+    // tag that no longer exists in the picker
+    saveExercises(prev => prev.map(e => ({ ...e, tags: tagsOf(e).filter(t => t !== tag) })));
+    // If this tag was the active filter anywhere, fall back to "All"
+    if (circuitFilter === tag) saveCircuitFilter("All");
+    if (filterCat === tag) setFilterCat("All");
+  }
+
+  function toggleExerciseTag(id, tag) {
+    saveExercises(prev => prev.map(e => {
+      if (e.id !== id) return e;
+      const current = tagsOf(e);
+      const next = current.includes(tag) ? current.filter(t => t !== tag) : [...current, tag];
+      return { ...e, tags: next };
+    }));
+  }
   const [stats,          saveStats]          = useStorage("kb_stats_v3",    { history: [] });
-  const [todayWorkout,   saveTodayWorkout]   = useStorage("kb_today_v3",   { date: null, sets: [] });
+  const [todayWorkout,   saveTodayWorkout]   = useStorage("kb_today_v3",   { date: null, sets: [], filter: "All" });
+  const [circuitFilter,  saveCircuitFilter]  = useStorage("kb_filter_v1",   "All");
   const [stravaData,     saveStravaData]     = useStorage("strava_oauth_v1", {
     clientId: "", clientSecret: "", accessToken: "", refreshToken: "", expiresAt: 0
   });
@@ -627,6 +720,7 @@ function App() {
   // Library UI
   const [newName, setNewName]   = useState("");
   const [newCat,  setNewCat]    = useState("Kettlebell");
+  const [newTagInput, setNewTagInput] = useState("");
   const [filterCat,setFilterCat]= useState("All");
   const [searchQ, setSearchQ]   = useState("");
 
@@ -808,16 +902,27 @@ function App() {
     setTimeLeft(EXERCISE_TIME);
   }
 
-  function genWorkout() {
-    const sets = buildWorkout(exercises);
-    saveTodayWorkout({ date: today, sets });
+  function genWorkout(filterOverride) {
+    // filterOverride lets quick-mode buttons bypass the current circuitFilter
+    const activeFilter = filterOverride !== undefined ? filterOverride : circuitFilter;
+    const pool = activeFilter === "All"
+      ? exercises
+      : exercises.filter(e => tagsOf(e).includes(activeFilter));
+    if (pool.length === 0) {
+      alert(`No exercises found with tag: ${activeFilter}. Add some in the Library tab first.`);
+      return;
+    }
+    const sets = buildWorkout(pool);
+    // Store which filter was used so the circuit card can show it
+    saveTodayWorkout({ date: today, sets, filter: activeFilter });
+    if (filterOverride !== undefined) saveCircuitFilter(filterOverride);
     stopWorkout();
     setTab("today");
   }
 
   function addExercise() {
     if (!newName.trim()) return;
-    saveExercises(prev => [...prev, { id: `e${Date.now()}`, name: newName.trim(), category: newCat, description: "" }]);
+    saveExercises(prev => [...prev, { id: `e${Date.now()}`, name: newName.trim(), tags: [newCat], description: "" }]);
     setNewName("");
   }
 
@@ -837,7 +942,7 @@ function App() {
   }
 
   const filteredEx = exercises.filter(e =>
-    (filterCat === "All" || e.category === filterCat) &&
+    (filterCat === "All" || tagsOf(e).includes(filterCat)) &&
     e.name.toLowerCase().includes(searchQ.toLowerCase())
   );
 
@@ -849,7 +954,11 @@ function App() {
     if (cat === "Kettlebell") return "badge kb";
     if (cat === "Bodyweight") return "badge bw";
     if (cat === "Core")       return "badge co";
-    return "badge ot";
+    if (cat === "Cardio" || cat === "Strength") return "badge ot";
+    // Anything not in the original five built-in categories is a
+    // user-created custom tag — gets its own distinct teal styling
+    // so it's visually obvious which tags are "yours"
+    return "badge tg";
   }
 
   // Returns a valid access token, refreshing automatically if expired
@@ -1053,19 +1162,81 @@ function App() {
 
             <div className="card">
               <div className="ct">Today's Circuit — {CIRCUIT_SIZE} Sets</div>
+
+              {/* ── Tag filter chips — built-in categories + any custom tags ── */}
+              <div style={{fontFamily:"IBM Plex Mono",fontSize:9,color:"var(--mu)",textTransform:"uppercase",letterSpacing:2,marginBottom:6}}>
+                Filter pool
+              </div>
+              <div className="cftabs">
+                {["All", ...allTags].map(c => {
+                  const isOn = circuitFilter === c;
+                  const isBW = c === "Bodyweight";
+                  return (
+                    <button
+                      key={c}
+                      className={`cftab ${isOn ? (isBW ? "bw-on" : "on") : ""}`}
+                      onClick={() => saveCircuitFilter(c)}
+                    >{c}</button>
+                  );
+                })}
+              </div>
+
+              {/* ── How many exercises available in pool ── */}
+              {(() => {
+                const poolSize = circuitFilter === "All"
+                  ? exercises.length
+                  : exercises.filter(e => tagsOf(e).includes(circuitFilter)).length;
+                const isAll = circuitFilter === "All";
+                const isBW  = circuitFilter === "Bodyweight";
+                return (
+                  <div className={`filter-badge ${isAll ? "" : isBW ? "bw-active" : "active"}`} style={{marginBottom:12}}>
+                    <span>{isAll ? "●" : "◈"}</span>
+                    <span>{isAll ? `All ${poolSize} exercises` : `${circuitFilter} only · ${poolSize} exercises`}</span>
+                  </div>
+                );
+              })()}
+
+              {/* ── Generate / Start buttons ── */}
               {!hasWorkout ? (
-                <button className="btn bp full" onClick={genWorkout}>Generate Circuit</button>
+                <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                  <button className="btn bp full" onClick={() => genWorkout()}>Generate Circuit</button>
+                  {circuitFilter !== "Bodyweight" && (
+                    <button className="btn bw-quick btn full bsm" onClick={() => genWorkout("Bodyweight")}>
+                      ◈ Quick: Bodyweight Only
+                    </button>
+                  )}
+                </div>
               ) : (
                 <>
+                  {/* Filter badge on existing circuit */}
+                  {todayWorkout.filter && todayWorkout.filter !== "All" && (
+                    <div className={`filter-badge ${todayWorkout.filter === "Bodyweight" ? "bw-active" : "active"}`} style={{marginBottom:8}}>
+                      <span>◈</span>
+                      <span>{todayWorkout.filter} circuit</span>
+                    </div>
+                  )}
                   {!todayDone && (
                     <button className="btn bp full" style={{marginBottom:8}} onClick={startWorkout}>▶ Start Workout</button>
                   )}
-                  <button className="btn bg full" style={{marginBottom:12}} onClick={genWorkout}>↺ Regenerate</button>
+                  <div style={{display:"flex",gap:8,marginBottom:12}}>
+                    <button className="btn bg bsm" style={{flex:1}} onClick={() => genWorkout()}>
+                      ↺ Regenerate
+                    </button>
+                    {circuitFilter !== "Bodyweight" && (
+                      <button className="btn bw-quick bsm" style={{flex:1}} onClick={() => genWorkout("Bodyweight")}>
+                        ◈ BW Only
+                      </button>
+                    )}
+                  </div>
                   {todayWorkout.sets.map((ex, i) => (
                     <div key={i} className="xrow">
                       <span className="xn">{String(i+1).padStart(2,"0")}</span>
                       <span className="xnm">{ex.name}</span>
-                      <span className={catCls(ex.category)}>{ex.category}</span>
+                      <span style={{display:"flex",gap:4,flexWrap:"wrap",justifyContent:"flex-end",flexShrink:0}}>
+                        {tagsOf(ex).map(tag => (
+                          <span key={tag} className={catCls(tag)}>{tag}</span>
+                        ))}
+                      </span>
                     </div>
                   ))}
                 </>
@@ -1108,6 +1279,11 @@ function App() {
             {phase === "prep" && (
               <div className="tw">
                 <div className="tph" style={{letterSpacing:6,color:"var(--ac2)"}}>· GET READY ·</div>
+                {todayWorkout.filter && todayWorkout.filter !== "All" && (
+                  <div style={{fontFamily:"IBM Plex Mono",fontSize:9,color:"var(--ac2)",textTransform:"uppercase",letterSpacing:2,textAlign:"center",marginBottom:4,opacity:0.7}}>
+                    {todayWorkout.filter} circuit
+                  </div>
+                )}
                 {todayWorkout.sets[0] && (
                   <div className="tex" style={{color:"var(--mu)",fontSize:28}}>
                     {todayWorkout.sets[0].name}
@@ -1247,24 +1423,55 @@ function App() {
                 onKeyDown={e => e.key === "Enter" && addExercise()} />
               <div className="row" style={{marginBottom:8}}>
                 <select className="sel" value={newCat} onChange={e => setNewCat(e.target.value)}>
-                  {CATEGORIES.map(c => <option key={c}>{c}</option>)}
+                  {allTags.map(c => <option key={c}>{c}</option>)}
                 </select>
                 <button className="btn bp" onClick={addExercise}>+ Add</button>
               </div>
+              <div className="muted" style={{fontSize:11}}>
+                New exercises get this one tag to start — add more or change it any time below.
+              </div>
             </div>
+
+            {/* ── Manage Tags ── */}
+            <div className="card">
+              <div className="ct">Manage Tags</div>
+              <div className="muted" style={{fontSize:12,marginBottom:10,lineHeight:1.6}}>
+                Built-in tags (Kettlebell, Bodyweight, Core, Cardio, Strength) can't be removed.
+                Custom tags you create can be deleted at any time — doing so removes them from any exercise that has them.
+              </div>
+              {customTags.length > 0 && (
+                <div className="ftabs" style={{marginBottom:10}}>
+                  {customTags.map(t => (
+                    <span key={t} className="ftab on" style={{display:"inline-flex",alignItems:"center",gap:6,cursor:"default",background:"rgba(80,180,200,.18)",borderColor:"#5fc7dd",color:"#5fc7dd"}}>
+                      {t}
+                      <span style={{cursor:"pointer",fontWeight:700}} onClick={() => removeCustomTag(t)}>✕</span>
+                    </span>
+                  ))}
+                </div>
+              )}
+              <div className="row">
+                <input className="inp" placeholder="New tag name..." value={newTagInput}
+                  onChange={e => setNewTagInput(e.target.value)}
+                  onKeyDown={e => { if (e.key === "Enter") { addCustomTag(newTagInput); setNewTagInput(""); } }}
+                  style={{marginBottom:0}} />
+                <button className="btn bp" onClick={() => { addCustomTag(newTagInput); setNewTagInput(""); }}>+ Tag</button>
+              </div>
+            </div>
+
             <div className="card">
               <div className="ct">Library ({filteredEx.length} / {exercises.length})</div>
               <input className="inp" placeholder="Search..." value={searchQ} onChange={e => setSearchQ(e.target.value)} />
               <div className="ftabs">
-                {["All", ...CATEGORIES].map(c => (
+                {["All", ...allTags].map(c => (
                   <button key={c} className={`ftab ${filterCat===c?"on":""}`} onClick={() => setFilterCat(c)}>{c}</button>
                 ))}
               </div>
               {filteredEx.length === 0 && <div className="muted" style={{padding:"8px 0"}}>No exercises found</div>}
               {filteredEx.map(ex => (
-                <ExerciseRow key={ex.id} ex={ex} catCls={catCls}
+                <ExerciseRow key={ex.id} ex={ex} catCls={catCls} allTags={allTags}
                   onRemove={() => removeExercise(ex.id)}
                   onDescChange={(desc) => saveExercises(prev => prev.map(e => e.id===ex.id ? {...e, description:desc} : e))}
+                  onToggleTag={(tag) => toggleExerciseTag(ex.id, tag)}
                 />
               ))}
             </div>
@@ -1433,5 +1640,56 @@ function App() {
   );
 }
 
+// ── Error Boundary ──────────────────────────────────────────────────────
+// React Error Boundaries MUST be class components — this is one of the few
+// remaining cases where a class is required even in modern React, because
+// the catching mechanism (getDerivedStateFromError / componentDidCatch) only
+// exists on the class component lifecycle, not in hooks.
+//
+// Without this, ANY uncaught error during rendering (a bad CDN version, a
+// genuine bug, corrupted stored data, etc.) crashes the entire React tree
+// silently, leaving a blank white screen with no clue why. This catches
+// that and shows a readable message instead.
+class ErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { error: null };
+  }
+  static getDerivedStateFromError(error) {
+    return { error };
+  }
+  componentDidCatch(error, info) {
+    console.error("Parabola crashed:", error, info);
+  }
+  render() {
+    if (this.state.error) {
+      return React.createElement('div', {
+        style: {
+          fontFamily: "IBM Plex Mono, monospace",
+          background: "#0d0d0b",
+          color: "#eeebe2",
+          minHeight: "100vh",
+          padding: "32px 20px",
+          maxWidth: 430,
+          margin: "0 auto",
+          boxSizing: "border-box",
+        }
+      },
+        React.createElement('div', { style: { fontFamily: "Bebas Neue, sans-serif", fontSize: 32, color: "#e05c1a", letterSpacing: 2, marginBottom: 16 } }, "SOMETHING WENT WRONG"),
+        React.createElement('p', { style: { fontSize: 13, color: "#a8a59c", lineHeight: 1.6, marginBottom: 16 } },
+          "Parabola hit an error while loading. This is usually caused by an external script (React, Babel) changing version, or corrupted saved data. Try reloading first."),
+        React.createElement('div', {
+          style: { background: "#1c1c19", border: "1px solid #272723", borderRadius: 4, padding: 12, fontSize: 11, color: "#d95050", marginBottom: 20, wordBreak: "break-word" }
+        }, String(this.state.error && this.state.error.message ? this.state.error.message : this.state.error)),
+        React.createElement('button', {
+          style: { background: "#e05c1a", color: "white", border: "none", borderRadius: 2, padding: "12px 20px", fontFamily: "IBM Plex Mono, monospace", fontWeight: 700, letterSpacing: 1, textTransform: "uppercase", width: "100%", cursor: "pointer" },
+          onClick: () => window.location.reload()
+        }, "Reload App")
+      );
+    }
+    return this.props.children;
+  }
+}
+
 const root = ReactDOM.createRoot(document.getElementById('root'));
-root.render(React.createElement(App));
+root.render(React.createElement(ErrorBoundary, null, React.createElement(App)));

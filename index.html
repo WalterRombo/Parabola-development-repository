@@ -38,7 +38,11 @@
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 
   <!-- Babel Standalone (transforms JSX in the browser — no build step needed) -->
-  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <!-- IMPORTANT: pinned to major version 7. Babel 8 (released June 2026) is a
+       breaking change that is NOT compatible with this in-browser JSX setup.
+       Never remove the "@7" — without it, this silently jumps to whatever
+       Babel ships next and the whole app goes blank with no error. -->
+  <script src="https://unpkg.com/@babel/standalone@7/babel.min.js"></script>
 
   <!-- The App -->
   <script type="text/babel" src="app.jsx" data-presets="react"></script>
