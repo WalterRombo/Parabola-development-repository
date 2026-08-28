@@ -383,23 +383,42 @@ function beepSeq(tones) {
   } catch {}
 }
 
+// ── useStorage: read SYNCHRONOUSLY at init, write with visible error handling ──
+//
+// Previous version read localStorage in a useEffect (after first render).
+// This left a window where useState(init) — the DEFAULT_EXERCISES — was the
+// live state. During that window the migration effect would fire, see
+// DEFAULT_EXERCISES (which have no tags), and call saveExercises — potentially
+// writing DEFAULT_EXERCISES back to localStorage before the real stored data
+// was loaded. Any exercise added by the user in that window could also be
+// built on top of the stale default data.
+//
+// Fix: pass a lazy initialiser function to useState. React calls it once,
+// synchronously, before any render or effect — so localStorage is read at
+// exactly the right moment and the DEFAULT_EXERCISES value is never live.
 function useStorage(key, init) {
-  const [val, setVal] = useState(init);
-  const valRef = useRef(init);
-  useEffect(() => { valRef.current = val; });
-  useEffect(() => {
-    (async () => {
-      try {
-        const raw = localStorage.getItem(key);
-        if (raw) setVal(JSON.parse(raw));
-      } catch {}
-    })();
-  }, [key]);
-  const save = useCallback(async (u) => {
+  const [val, setVal] = useState(() => {
+    try {
+      const raw = localStorage.getItem(key);
+      if (raw) return JSON.parse(raw);
+    } catch {}
+    return typeof init === "function" ? init() : init;
+  });
+  const valRef = useRef(val);  // initialise to the REAL loaded value, not init
+
+  const save = useCallback((u, onError) => {
     const next = typeof u === "function" ? u(valRef.current) : u;
+    valRef.current = next;   // update ref synchronously before any async work
     setVal(next);
-    try { localStorage.setItem(key, JSON.stringify(next)); } catch {}
+    try {
+      localStorage.setItem(key, JSON.stringify(next));
+    } catch (e) {
+      // Surface write failures to the caller instead of silently swallowing
+      if (onError) onError(e);
+      else console.error("Parabola storage write failed:", key, e);
+    }
   }, [key]);
+
   return [val, save];
 }
 
@@ -612,12 +631,13 @@ function App() {
   const [exercises,      saveExercises]      = useStorage("kb_ex_v4",      DEFAULT_EXERCISES);
   const [customTags,     saveCustomTags]     = useStorage("kb_custom_tags_v1", []);
 
-  // One-time migration: any exercise still on the old single-category shape
-  // gets a "tags" array added (derived from its category), without touching
-  // exercises that already have tags. This runs against whatever is already
-  // in storage — your existing 291-exercise library — so nothing is lost or
-  // reset. Once every exercise has a tags array, the condition below is
-  // false and this effect does nothing on subsequent renders.
+  // One-time migration: run synchronously at mount, not in a reactive effect.
+  // useEffect with [exercises] fires on EVERY exercises change, which means
+  // it fires when the user adds an exercise, creating a second concurrent
+  // write to localStorage. Moving this to a plain useEffect with [] (empty
+  // deps) means it fires exactly once after the first render — and since
+  // localStorage is now read synchronously in useState, the exercises value
+  // here is already the stored library, not DEFAULT_EXERCISES.
   useEffect(() => {
     const needsMigration = exercises.some(e => !Array.isArray(e.tags));
     if (needsMigration) {
@@ -625,7 +645,7 @@ function App() {
         Array.isArray(e.tags) ? e : { ...e, tags: e.category ? [e.category] : [] }
       ));
     }
-  }, [exercises]);
+  }, []); // ← empty deps: runs once on mount only, never on subsequent changes
 
   // Full set of tags available to filter/assign by: built-in categories +
   // user-created custom tags, deduplicated.
@@ -720,7 +740,8 @@ function App() {
   // Library UI
   const [newName, setNewName]   = useState("");
   const [newCat,  setNewCat]    = useState("Kettlebell");
-  const [newTagInput, setNewTagInput] = useState("");
+  const [newTagInput,  setNewTagInput]  = useState("");
+  const [saveMsg,      setSaveMsg]      = useState(""); // "" | "saved" | "error"
   const [filterCat,setFilterCat]= useState("All");
   const [searchQ, setSearchQ]   = useState("");
 
@@ -921,9 +942,20 @@ function App() {
   }
 
   function addExercise() {
-    if (!newName.trim()) return;
-    saveExercises(prev => [...prev, { id: `e${Date.now()}`, name: newName.trim(), tags: [newCat], description: "" }]);
+    const name = newName.trim();
+    if (!name) return;
+    saveExercises(
+      prev => [...prev, { id: `e${Date.now()}`, name, tags: [newCat], description: "" }],
+      // onError callback: called if localStorage.setItem throws (e.g. quota exceeded)
+      (err) => {
+        setSaveMsg("error");
+        setTimeout(() => setSaveMsg(""), 4000);
+        console.error("addExercise save failed:", err);
+      }
+    );
     setNewName("");
+    setSaveMsg("saved");
+    setTimeout(() => setSaveMsg(""), 2000);
   }
 
   function removeExercise(id) {
@@ -1427,6 +1459,16 @@ function App() {
                 </select>
                 <button className="btn bp" onClick={addExercise}>+ Add</button>
               </div>
+              {saveMsg === "saved" && (
+                <div style={{fontFamily:"IBM Plex Mono",fontSize:11,color:"var(--gn)",letterSpacing:1,marginBottom:4}}>
+                  ✓ Exercise saved to library
+                </div>
+              )}
+              {saveMsg === "error" && (
+                <div style={{fontFamily:"IBM Plex Mono",fontSize:11,color:"var(--rd)",letterSpacing:1,marginBottom:4,lineHeight:1.5}}>
+                  ✗ Save failed — storage may be full. Try removing unused exercises.
+                </div>
+              )}
               <div className="muted" style={{fontSize:11}}>
                 New exercises get this one tag to start — add more or change it any time below.
               </div>
